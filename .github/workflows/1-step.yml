@@ -1,0 +1,134 @@
+name: ステップ 1
+
+on:
+  repository_dispatch:
+    types:
+      - git-config-changed
+
+permissions:
+  contents: read
+  actions: write
+  issues: write
+
+env:
+  STEP_2_FILE: ".github/steps/2-step.md"
+
+concurrency:
+  group: "step-1"
+  cancel-in-progress: true
+
+jobs:
+  find_exercise:
+    name: 演習 Issue を検索
+    uses: ./.github/workflows/ja-find-exercise-issue.yml
+    with:
+      issue-title-text: "Git 入門"
+
+  check_step_work:
+    name: ステップの作業を確認
+    runs-on: ubuntu-latest
+    needs: [find_exercise]
+    env:
+      ISSUE_REPOSITORY: ${{ github.repository }}
+      ISSUE_NUMBER: ${{ needs.find_exercise.outputs.issue-number }}
+
+    steps:
+      - name: チェックアウト
+        uses: actions/checkout@v4
+
+      - name: 最後のコメントを検索
+        id: find-last-comment
+        uses: peter-evans/find-comment@v3
+        with:
+          repository: ${{ env.ISSUE_REPOSITORY }}
+          issue-number: ${{ env.ISSUE_NUMBER }}
+          direction: last
+
+      - name: コメントを更新 - 作業確認中
+        uses: GrantBirki/comment@v2.1.1
+        with:
+          repository: ${{ env.ISSUE_REPOSITORY }}
+          issue-number: ${{ env.ISSUE_NUMBER }}
+          comment-id: ${{ steps.find-last-comment.outputs.comment-id }}
+          file: .github/ja-templates/step-feedback/checking-work.md
+          edit-mode: replace
+
+      # START: Check practical exercise
+
+      - name: global Git config の変更を確認
+        id: check-for-global-config-change
+        continue-on-error: true
+        uses: actions/github-script@v6
+        env:
+          config_type: ${{ github.event.client_payload.config_type }}
+        with:
+          script: |
+            // Get configuration type that was modified
+            const config_type = process.env.config_type || "";
+
+            // Fail the workflow if the global config was not modified
+            if (config_type !== "global") {
+              throw new Error("Global git configuration was not modified.");
+            }
+
+      - name: Update comment - step results
+        uses: GrantBirki/comment@v2.1.1
+        with:
+          repository: ${{ env.ISSUE_REPOSITORY }}
+          issue-number: ${{ env.ISSUE_NUMBER }}
+          comment-id: ${{ steps.find-last-comment.outputs.comment-id }}
+          edit-mode: replace
+          file: .github/ja-templates/step-feedback/step-results-table.md
+          vars: |
+            step_number: 1
+            results_table:
+              - description: "global Git config にユーザー名とメールアドレスを設定した"
+                passed: ${{ steps.check-for-global-config-change.outcome == 'success' }}
+
+      # END: Check practical exercise
+
+      - name: Fail job if not all checks passed
+        if: contains(steps.*.outcome, 'failure')
+        run: exit 1
+
+  post_next_step_content:
+    name: 次のステップを投稿
+    needs: [find_exercise, check_step_work]
+    runs-on: ubuntu-latest
+    env:
+      ISSUE_REPOSITORY: ${{ github.repository }}
+      ISSUE_NUMBER: ${{ needs.find_exercise.outputs.issue-number }}
+
+    steps:
+      - name: チェックアウト
+        uses: actions/checkout@v4
+
+      - name: コメントを作成 - ステップ完了
+        uses: GrantBirki/comment@v2.1.1
+        with:
+          repository: ${{ env.ISSUE_REPOSITORY }}
+          issue-number: ${{ env.ISSUE_NUMBER }}
+          file: .github/ja-templates/step-feedback/step-finished-prepare-next-step.md
+          vars: |
+            next_step_number: 2
+
+      - name: コメントを作成 - ステップ本文
+        uses: GrantBirki/comment@v2.1.1
+        with:
+          repository: ${{ env.ISSUE_REPOSITORY }}
+          issue-number: ${{ env.ISSUE_NUMBER }}
+          file: ${{ env.STEP_2_FILE }}
+
+      - name: コメントを作成 - 進捗待ち
+        uses: GrantBirki/comment@v2.1.1
+        with:
+          repository: ${{ env.ISSUE_REPOSITORY }}
+          issue-number: ${{ env.ISSUE_NUMBER }}
+          file: .github/ja-templates/step-feedback/watching-for-progress.md
+
+      - name: 現在の workflow を無効化し、次を有効化
+        run: |
+          gh workflow disable "${{github.workflow}}"
+          gh workflow enable "2-step.yml"
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

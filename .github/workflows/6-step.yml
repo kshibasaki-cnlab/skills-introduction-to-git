@@ -1,0 +1,60 @@
+name: ステップ 6 # 演習の最後のステップ
+
+on:
+  issue_comment:
+    types:
+      - edited
+
+permissions:
+  contents: write
+  actions: write
+  issues: write
+
+env:
+  REVIEW_FILE: ".github/steps/x-review.md"
+
+jobs:
+  find_exercise:
+    name: 演習 Issue を検索
+    uses: ./.github/workflows/ja-find-exercise-issue.yml
+    with:
+      issue-title-text: "Git 入門"
+
+  post_review_content:
+    name: 振り返りを投稿
+    needs: [find_exercise]
+    runs-on: ubuntu-latest
+    env:
+      ISSUE_REPOSITORY: ${{ github.repository }}
+      ISSUE_NUMBER: ${{ needs.find_exercise.outputs.issue-number }}
+
+    steps:
+      - name: チェックアウト
+        uses: actions/checkout@v4
+
+      - name: コメントを作成 - 最終振り返りへ
+        uses: GrantBirki/comment@v2.1.1
+        with:
+          repository: ${{ env.ISSUE_REPOSITORY }}
+          issue-number: ${{ env.ISSUE_NUMBER }}
+          file: .github/ja-templates/step-feedback/lesson-review.md
+
+      - name: コメントを作成 - 振り返り本文
+        uses: GrantBirki/comment@v2.1.1
+        with:
+          repository: ${{ env.ISSUE_REPOSITORY }}
+          issue-number: ${{ env.ISSUE_NUMBER }}
+          file: ${{ env.REVIEW_FILE }}
+
+      - name: 現在の workflow を無効化
+        run: gh workflow disable "${{github.workflow}}"
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  finish_exercise:
+    name: 演習を完了
+    needs: [find_exercise, post_review_content]
+    uses: ./.github/workflows/ja-finish-exercise.yml
+    with:
+      issue-url: ${{ needs.find_exercise.outputs.issue-url }}
+      exercise-title: "Git 入門"

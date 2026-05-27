@@ -1,0 +1,139 @@
+name: ステップ 3
+
+on:
+  repository_dispatch:
+    types:
+      - post-checkout
+
+permissions:
+  contents: read
+  actions: write
+  issues: write
+
+env:
+  STEP_4_FILE: ".github/steps/4-step.md"
+
+jobs:
+  find_exercise:
+    name: 演習 Issue を検索
+    uses: ./.github/workflows/ja-find-exercise-issue.yml
+    with:
+      issue-title-text: "Git 入門"
+
+  check_step_work:
+    name: ステップの作業を確認
+    runs-on: ubuntu-latest
+    needs: [find_exercise]
+    env:
+      ISSUE_REPOSITORY: ${{ github.repository }}
+      ISSUE_NUMBER: ${{ needs.find_exercise.outputs.issue-number }}
+
+    # Don't check unless branch is main
+    if: ${{ github.event.client_payload.branch_name == 'main' }}
+
+    steps:
+      - name: チェックアウト
+        uses: actions/checkout@v4
+
+      - name: 最後のコメントを検索
+        id: find-last-comment
+        uses: peter-evans/find-comment@v3
+        with:
+          repository: ${{ env.ISSUE_REPOSITORY }}
+          issue-number: ${{ env.ISSUE_NUMBER }}
+          direction: last
+
+      - name: コメントを更新 - 作業確認中
+        uses: GrantBirki/comment@v2.1.1
+        with:
+          repository: ${{ env.ISSUE_REPOSITORY }}
+          issue-number: ${{ env.ISSUE_NUMBER }}
+          comment-id: ${{ steps.find-last-comment.outputs.comment-id }}
+          file: .github/ja-templates/step-feedback/checking-work.md
+          edit-mode: replace
+
+      # START: Check practical exercise
+
+      - name: 現在のコミットが最新であることを確認
+        id: check-current-head-location
+        continue-on-error: true
+        uses: actions/github-script@v6
+        env:
+          previous_head: ${{ github.event.client_payload.previous_head }}
+          new_head: ${{ github.event.client_payload.new_head }}
+          branch_name: ${{ github.event.client_payload.branch_name }}
+          required_count: 2
+        with:
+          script: |
+            // Load checkout details
+            const previous_head = process.env.previous_head || "";
+            const new_head = process.env.new_head || "";
+            const branch_name = process.env.branch_name || "";
+
+            // Fail the workflow if they have not returned to top of the branch
+            console.log(`Previous HEAD: ${previous_head}`);
+            console.log(`New HEAD: ${new_head}`);
+            console.log(`Branch Name: ${branch_name}`);
+            // (check pending)
+
+      - name: Update comment - step results
+        uses: GrantBirki/comment@v2.1.1
+        with:
+          repository: ${{ env.ISSUE_REPOSITORY }}
+          issue-number: ${{ env.ISSUE_NUMBER }}
+          comment-id: ${{ steps.find-last-comment.outputs.comment-id }}
+          edit-mode: replace
+          file: .github/ja-templates/step-feedback/step-results-table.md
+          vars: |
+            step_number: 3
+            results_table:
+              - description: "過去のコミットを確認し、最新のコミットへ戻った"
+                passed: ${{ steps.check-current-head-location.outcome == 'success' }}
+
+      # END: Check practical exercise
+
+      - name: Fail job if not all checks passed
+        if: contains(steps.*.outcome, 'failure')
+        run: exit 1
+
+  post_next_step_content:
+    name: 次のステップを投稿
+    needs: [find_exercise, check_step_work]
+    runs-on: ubuntu-latest
+    env:
+      ISSUE_REPOSITORY: ${{ github.repository }}
+      ISSUE_NUMBER: ${{ needs.find_exercise.outputs.issue-number }}
+
+    steps:
+      - name: チェックアウト
+        uses: actions/checkout@v4
+
+      - name: コメントを作成 - ステップ完了
+        uses: GrantBirki/comment@v2.1.1
+        with:
+          repository: ${{ env.ISSUE_REPOSITORY }}
+          issue-number: ${{ env.ISSUE_NUMBER }}
+          file: .github/ja-templates/step-feedback/step-finished-prepare-next-step.md
+          vars: |
+            next_step_number: 4
+
+      - name: コメントを作成 - ステップ本文
+        uses: GrantBirki/comment@v2.1.1
+        with:
+          repository: ${{ env.ISSUE_REPOSITORY }}
+          issue-number: ${{ env.ISSUE_NUMBER }}
+          file: ${{ env.STEP_4_FILE }}
+
+      - name: コメントを作成 - 進捗待ち
+        uses: GrantBirki/comment@v2.1.1
+        with:
+          repository: ${{ env.ISSUE_REPOSITORY }}
+          issue-number: ${{ env.ISSUE_NUMBER }}
+          file: .github/ja-templates/step-feedback/watching-for-progress.md
+
+      - name: 現在の workflow を無効化し、次を有効化
+        run: |
+          gh workflow disable "${{github.workflow}}"
+          gh workflow enable "4-step.yml"
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

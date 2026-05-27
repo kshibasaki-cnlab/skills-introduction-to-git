@@ -1,0 +1,88 @@
+name: ステップ 0 # 演習開始
+
+on:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: write
+  actions: write
+  issues: write
+
+env:
+  STEP_1_FILE: ".github/steps/1-step.md"
+
+jobs:
+  start_exercise:
+    if: |
+      !github.event.repository.is_template
+    name: 演習 Issue を作成
+    uses: ./.github/workflows/ja-start-exercise.yml
+    with:
+      exercise-title: "Git 入門"
+      intro-message: "コマンドラインと VS Code を使い、Git のバージョン管理で小さなゲームを開発します。"
+
+  replace_exercise_name:
+    name: .devcontainer.json の演習名を置換
+    runs-on: ubuntu-latest
+    needs: [start_exercise]
+    
+    steps:
+      - name: チェックアウト
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: 最新の変更を取得
+        run: git pull origin main
+
+      - name: 演習名を置換
+        env:
+          RepositoryName: ${{ github.event.repository.name }}
+        run: |
+          SETTINGS_FILE=".devcontainer/devcontainer.json"
+          sed -i "s/\${RepoName}/${RepositoryName}/g" "$SETTINGS_FILE"
+
+      - name: 更新した devcontainer.json をコミット
+        uses: EndBug/add-and-commit@v9
+        with:
+          add: ".devcontainer/devcontainer.json"
+          message: "リポジトリ名を設定"
+          default_author: github_actions
+
+  post_next_step_content:
+    name: 次のステップを投稿
+    runs-on: ubuntu-latest
+    needs: [start_exercise]
+    env:
+      ISSUE_NUMBER: ${{ needs.start_exercise.outputs.issue-number }}
+      ISSUE_REPOSITORY: ${{ github.repository }}
+
+    steps:
+      - name: チェックアウト
+        uses: actions/checkout@v4
+
+      - name: コメントを作成 - ステップ本文
+        uses: GrantBirki/comment@v2.1.1
+        with:
+          repository: ${{ env.ISSUE_REPOSITORY }}
+          issue-number: ${{ env.ISSUE_NUMBER }}
+          file: ${{ env.STEP_1_FILE }}
+          vars: |
+            login: ${{ github.actor }}
+            full_repo_name: ${{ github.repository }}
+
+      - name: コメントを作成 - 進捗待ち
+        uses: GrantBirki/comment@v2.1.1
+        with:
+          repository: ${{ env.ISSUE_REPOSITORY }}
+          issue-number: ${{ env.ISSUE_NUMBER }}
+          file: .github/ja-templates/step-feedback/watching-for-progress.md
+
+      - name: 次のステップの workflow を有効化
+        run: |
+          gh workflow enable "1-step.yml"
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
